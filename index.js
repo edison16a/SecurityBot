@@ -216,11 +216,20 @@ const HELPER_ROLE_ID = '1433264703345393786'; // alias of MM_ALLOWED_ROLE (set a
 
 // Vouch ticker controller (wrapping existing ticker)
 let VOUCH_TIMER = null;
-let VOUCH_MS = VOUCH_INTERVAL_MS; // default; can be changed by +vouchinterval
+// ⚙️ Make the configured interval behave as SECONDS if small, else treat as ms.
+let VOUCH_MS = (typeof VOUCH_INTERVAL_MS === 'number'
+  ? (VOUCH_INTERVAL_MS >= 1000 ? VOUCH_INTERVAL_MS : Math.round(VOUCH_INTERVAL_MS * 1000))
+  : 60000);
 let VOUCH_RUNNING = false;
 let VOUCH_CHANNEL_OBJ = null;
 async function startVouchTicker(clientInst) {
-  if (VOUCH_RUNNING) return;
+  // Always clear any older timer to ensure reliable restarts
+  if (VOUCH_TIMER) {
+    clearInterval(VOUCH_TIMER);
+    VOUCH_TIMER = null;
+  }
+  VOUCH_RUNNING = false;
+
   // Resolve the channel if not cached
   try {
     VOUCH_CHANNEL_OBJ = await clientInst.channels.fetch(VOUCH_CHANNEL_ID);
@@ -786,6 +795,30 @@ client.on('messageCreate', async (msg) => {
   const isProfitController = msg.author.id === PROFIT_CONTROLLER_ID;
   const isProfitHelper = isMMAllowed || isProfitController || hasRole(member, HELPER_ROLE_ID); // allow helpers
 
+  // 📖 STAFF HELP (MM staff & helpers) — shows MM and helper commands
+  if (lower === '+help' && (hasRole(member, MM_ALLOWED_ROLE) || hasRole(member, MM_STAFF_ROLE) || hasRole(member, HELPER_ROLE_ID))) {
+    const e = new EmbedBuilder()
+      .setColor(0x8b5cf6)
+      .setTitle('📖 Staff Help')
+      .setDescription(
+        [
+          '**MM Commands**',
+          '`+panel` — Post the MM request panel (staff only)',
+          '`+mminfo` — Post MM info (staff only)',
+          '`+hit` — Post recruit panel with ✅/❌',
+          '`+claim`, `+unclaim`, `+transfer @user`, `+close` — Ticket controls',
+          '',
+          '**Helper / Profit Commands**',
+          '`+search @user` — View profit summary (staff & helpers)',
+          '`+tprofit @user amount` — Set profit (helpers only)',
+          '`+addprofit @user amount` — Add to profit (helpers only)',
+          '`+reset @user` — Reset profile (helpers only)'
+        ].join('\n')
+      );
+    await msg.channel.send({ embeds: [e] });
+    return;
+  }
+
   // +panel (MM role required)
   if (lower === '+panel' && isMMAllowed) {
     const panel = buildMMPanelEmbed();
@@ -972,7 +1005,8 @@ client.on('messageCreate', async (msg) => {
     return;
   }
 
-  if (isProfitHelper && lower.startsWith('+search')) {
+  // ✅ Allow STAFF to run +search (but not the other profit commands)
+  if ((isProfitHelper || hasRole(member, MM_STAFF_ROLE)) && lower.startsWith('+search')) {
     const [, mention] = msg.content.trim().split(/\s+/);
     const uid = parseUserId(mention);
     if (!uid) {
