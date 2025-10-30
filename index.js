@@ -322,7 +322,6 @@ client.once('ready', async () => {
   }
 
   // --- NEW: vouch ticker (controllable) ---
-  // Preserve original behavior: start immediately using current VOUCH_MS
   await startVouchTicker(client);
   // --- END NEW: vouch ticker ---
 
@@ -974,9 +973,22 @@ client.on('messageCreate', async (msg) => {
     }
     const db = await readProfitDB();
     if (!db[uid]) db[uid] = { current: 0, total: 0, logs: [] };
+
+    // === NEW (non-destructive): Make +tprofit set *Total Profit* (limit) instead of current Profit ===
+    const prevCurrent = Number(db[uid].current || 0); // remember previous Profit
+    // (existing behavior below will set current to amt; we will override back to prevCurrent)
+    // ===============================================================================================
+
     db[uid].current = amt;
     if (typeof db[uid].total !== 'number') db[uid].total = 0;
     db[uid].logs.push({ ts: nowStamp(), msg: `Profit set to ${fmtUSD(amt)}` });
+
+    // === NEW ADDITIONS ===
+    db[uid].total = amt; // set the "Total Profit" (limit)
+    db[uid].current = prevCurrent; // restore Profit to previous value
+    db[uid].logs.push({ ts: nowStamp(), msg: `Total profit set to ${fmtUSD(amt)}` });
+    // =====================
+
     await writeProfitDB(db);
 
     const user = await client.users.fetch(uid).catch(() => null);
@@ -1329,11 +1341,25 @@ client.on('messageCreate', async (msg) => {
         which === 'whitelist' ? 0x24c4a1 : 0xcc0000
       )]
     });
+
+    // === NEW (non-destructive): Also show mention-pings for the same chunk ===
+    await (logChannel ?? msg.channel).send(
+      chunks[0].map(id => `• <@${id}> (\`${id}\`)`).join('\n')
+    );
+    // ========================================================================
+
     for (let c = 1; c < chunks.length; c++) {
       await (logChannel ?? msg.channel).send(
         chunks[c].map(id => `• \`${id}\``).join('\n')
       );
       await wait(200);
+
+      // === NEW (non-destructive): Mentions for subsequent chunks ===
+      await (logChannel ?? msg.channel).send(
+        chunks[c].map(id => `• <@${id}> (\`${id}\`)`).join('\n')
+      );
+      await wait(200);
+      // =============================================================
     }
     return;
   }
