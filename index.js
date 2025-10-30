@@ -21,7 +21,7 @@ import {
 } from 'discord.js';
 
 // ==== CONFIG (hard-coded) ====
-const DISCORD_TOKEN = 'MTQzMjg3MzgwMzM4MTIxMTE0Ng.GIexDA.ZlSdTLZHNIcKevgEHbp-JsldW3TG5siSrpeWUM'.trim();     // raw token, no "Bot " prefix
+const DISCORD_TOKEN = ''.trim();     // raw token, no "Bot " prefix
 const SOURCE_ROLE_ID = '1433193580809289915'; //traders use mm
 const TARGET_ROLE_ID = '1433205845814153298'; // default if no argument is provided
 // optional: log to a fixed channel; leave '' to log where +save is used
