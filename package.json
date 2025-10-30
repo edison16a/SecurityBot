@@ -1,0 +1,14 @@
+{
+  "name": "save-role-bot",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.js",
+  "license": "MIT",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.24.1",
+    "dotenv": "^16.6.1"
+  }
+}

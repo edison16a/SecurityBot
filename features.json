@@ -1,0 +1,8 @@
+{
+  "ban": true,
+  "kick": true,
+  "botadd": true,
+  "channel": true,
+  "roleUpdate": true,
+  "roleDelete": true
+}
