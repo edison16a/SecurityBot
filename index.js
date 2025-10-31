@@ -431,6 +431,7 @@ async function addExecutorToBlacklist(guild, executorId, reason) {
 }
 // Auto-undo bans ONLY if a non-bot, non-whitelisted executor did the ban
 client.on('guildBanAdd', async (ban) => {
+  console.log("Person banned");
   // ===== FEATURE FLAG GUARD =====
   try { if (!FEATURES.ban) return; } catch {}
   // ==============================
@@ -902,7 +903,7 @@ client.on('messageCreate', async (msg) => {
       .setTitle('Middleman Info & Explanation')
       .setDescription(
         '• Middleman (MM) is a trusted person with many vouches who helps transactions go smoothly without scams.\n\n' +
-        '• Example: Trade is NFR Crow for Robux.\n\n' +
+        '• Example: Trade is $20 for Garama.\n\n' +
         '**Example: One trader is giving $20 for a Garama**\n\n 1) The seller gives the middleman (MM) the Garama on a private server. \n 2) The MM holds the Garama safely and confirms both sides are ready. \n 3) The buyer sends $20 directly to the seller. \n 4) Once the seller confirms payment, they notify the MM. \n5) The MM releases the Garama to the buyer, completing the trade.'
       )
       .setImage(MM_INFO_IMAGE)
