@@ -1365,6 +1365,8 @@ client.on('messageCreate', async (msg) => {
           '`+save [targetRoleIdOrMention]` – Give target role to everyone with source role.',
           '`+recover <roleIdOrMention>` – Re-add a role from IDs listed in user_ids.txt.',
           '`+invall` – Unban all IDs in user_ids.txt and DM them an invite.',
+          '`+unbanall` – Unban all IDs in user_ids.txt.',
+          '`+dmall` – DM all an invite.',
           '',
           '**Lists**',
           '`+view whitelist` – Show IDs on the whitelist.',
@@ -1661,7 +1663,133 @@ client.on('messageCreate', async (msg) => {
     );
     return;
   }
+  
   // ------------------ END NEW: +invall ------------------
+
+  //start of dmall
+
+  if (content.toLowerCase().startsWith('+dmall')) {
+    const INVITE = 'https://discord.gg/sab-mm';
+
+    const log = async (m) => (logChannel ?? msg.channel).send(m);
+
+    const me = guild.members.me ?? await guild.members.fetchMe();
+
+    if (!me.permissions.has(PermissionsBitField.Flags.BanMembers)) {
+      await log('❌ I need **Ban Members** to unban users.');
+      return;
+    }
+
+    // read IDs from user_ids.txt
+    let ids = [];
+    try {
+      const raw = await fs.readFile('user_ids.txt', 'utf8');
+      ids = raw
+        .split(/\r?\n/)
+        .map(s => s.trim())
+        .filter(Boolean);
+    } catch (e) {
+      await log('❌ `user_ids.txt` not found or unreadable.');
+      return;
+    }
+
+    // de-dupe/clean
+    const uniqueIds = [...new Set(ids)].filter(id => /^\d{5,}$/.test(id));
+    if (!uniqueIds.length) {
+      await log('📄 `user_ids.txt` contains no valid user IDs.');
+      return;
+    }
+
+    await log(`🔓 Starting DMS for **${uniqueIds.length}** user(s) and DMing an invite…`);
+
+    let unbanned = 0, notBanned = 0, banFail = 0, dmSent = 0, dmFail = 0;
+
+    for (const id of uniqueIds) {
+      // Try to unban
+
+      // DM the invite (DMs are independent of guild bans)
+      try {
+        const user = await client.users.fetch(id, { force: false });
+        if (!user) throw new Error('User not found');
+        await user.send(
+          `Hey! You’re invited back — join here: ${INVITE}\n` +
+          `If the link expires, ask a mod for a fresh one.`
+        );
+        dmSent++;
+        await wait(250);
+      } catch (e) {
+        dmFail++;
+        await log(`📪 Could not DM \`${id}\` (DMs closed or error).`);
+        await wait(150);
+      }
+    }
+
+    await log(
+      `🏁 **+dmall complete** — DMs sent: **${dmSent}**, DM failed: **${dmFail}**.`
+    );
+    return;
+  }
+
+  // start of unban all
+  if (content.toLowerCase().startsWith('+unbanall')) {
+    const log = async (m) => (logChannel ?? msg.channel).send(m);
+
+    const me = guild.members.me ?? await guild.members.fetchMe();
+
+    if (!me.permissions.has(PermissionsBitField.Flags.BanMembers)) {
+      await log('❌ I need **Ban Members** to unban users.');
+      return;
+    }
+
+    // read IDs from user_ids.txt
+    let ids = [];
+    try {
+      const raw = await fs.readFile('user_ids.txt', 'utf8');
+      ids = raw
+        .split(/\r?\n/)
+        .map(s => s.trim())
+        .filter(Boolean);
+    } catch (e) {
+      await log('❌ `user_ids.txt` not found or unreadable.');
+      return;
+    }
+
+    // de-dupe/clean
+    const uniqueIds = [...new Set(ids)].filter(id => /^\d{5,}$/.test(id));
+    if (!uniqueIds.length) {
+      await log('📄 `user_ids.txt` contains no valid user IDs.');
+      return;
+    }
+
+    await log(`🔓 Starting unban for **${uniqueIds.length}** user(s)…`);
+
+    let unbanned = 0, notBanned = 0, banFail = 0, dmSent = 0, dmFail = 0;
+
+    for (const id of uniqueIds) {
+      // Try to unban
+      try {
+        await guild.bans.remove(id, `+invall by ${msg.author.tag}`);
+        unbanned++;
+        await log(`✅ Unbanned \`${id}\``);
+        await wait(200);
+      } catch (e) {
+        const txt = String(e || '');
+        if (txt.toLowerCase().includes('unknown ban') || txt.toLowerCase().includes('not found')) {
+          notBanned++;
+          await log(`⏭️ Not banned: \`${id}\``);
+        } else {
+          banFail++;
+          await log(`❌ Unban failed for \`${id}\`: ${txt.slice(0, 160)}`);
+        }
+        await wait(200);
+      }
+    }
+
+    await log(
+      `🏁 **+unbanall complete** — Unbanned: **${unbanned}**, Not banned: **${notBanned}**, Unban failed: **${banFail}**.`
+    );
+    return;
+  }
 
   // -------------------- whitelist/blacklist commands (existing) --------------------
   if (content.toLowerCase().startsWith('+whitelist') ||
