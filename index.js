@@ -46,7 +46,9 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMembers,   // needed to fetch all members
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent  // to read +save
+    GatewayIntentBits.MessageContent,  // to read +save
+    // ==== ADDED: Required for guildBanAdd to fire ====
+    GatewayIntentBits.GuildBans
   ],
   partials: [Partials.Channel]
 });
@@ -234,7 +236,7 @@ const TICKET_BUTTON_IDS = {
 // Will treat MM_ALLOWED_ROLE as the "helper" role per your request
 // (everyone with helper role can use profit commands).
 // If you have a separate helper role, replace the ID below.
-const HELPER_ROLE_ID = '1433264703345393786'; // alias of MM_ALLOWED_ROLE (set again below for clarity)
+const HELPER_ROLE_ID = '1431477370019254353'; // alias of MM_ALLOWED_ROLE (set again below for clarity)
 
 // Vouch ticker controller (wrapping existing ticker)
 let VOUCH_TIMER = null;
@@ -764,7 +766,7 @@ client.on('guildMemberAdd', async (member) => {
 
 // IDs and assets for MM system
 const MM_ALLOWED_ROLE = '1433264703345393786'; // Can use MM commands (treated as "helper role")
-const MM_STAFF_ROLE   = '1433264851035095191'; // Staff ping & initial access
+const MM_STAFF_ROLE   = '1433264703345393786'; // Staff ping & initial access
 const MM_TEAM_ROLE_TO_GIVE = '1433193580809289915'; // Given on +hit accept
 const MM_CATEGORY_ID  = '1431477423245103194';
 const MM_TOS_CHANNEL  = '1433261472351260752';
@@ -857,7 +859,8 @@ client.on('messageCreate', async (msg) => {
   const member = msg.member ?? await msg.guild.members.fetch(msg.author.id).catch(() => null);
   const isMMAllowed = hasRole(member, MM_ALLOWED_ROLE);
   const isProfitController = msg.author.id === PROFIT_CONTROLLER_ID;
-  const isProfitHelper = isMMAllowed || isProfitController || hasRole(member, HELPER_ROLE_ID); // allow helpers
+  // ====== CHANGED: Profit helper is ONLY the HELPER_ROLE (per request) ======
+  const isProfitHelper = hasRole(member, HELPER_ROLE_ID); // helpers only
 
   // 📖 STAFF HELP (MM staff & helpers) — shows MM and helper commands
   if (lower === '+help' && (hasRole(member, MM_ALLOWED_ROLE) || hasRole(member, MM_STAFF_ROLE) || hasRole(member, HELPER_ROLE_ID))) {
@@ -903,7 +906,7 @@ client.on('messageCreate', async (msg) => {
       .setTitle('Middleman Info & Explanation')
       .setDescription(
         '• Middleman (MM) is a trusted person with many vouches who helps transactions go smoothly without scams.\n\n' +
-        '• Example: Trade is $20 for Garama.\n\n' +
+        '• Example: Trade is NFR Crow for Robux.\n\n' +
         '**Example: One trader is giving $20 for a Garama**\n\n 1) The seller gives the middleman (MM) the Garama on a private server. \n 2) The MM holds the Garama safely and confirms both sides are ready. \n 3) The buyer sends $20 directly to the seller. \n 4) Once the seller confirms payment, they notify the MM. \n5) The MM releases the Garama to the buyer, completing the trade.'
       )
       .setImage(MM_INFO_IMAGE)
@@ -1384,6 +1387,9 @@ client.on('messageCreate', async (msg) => {
           '',
           '**Profit (helper)**',
           '`+tprofit @user amount`, `+addprofit @user amount`, `+search @user`, `+reset @user`',
+          '',
+          '**Promo**',
+          '`+promo @user @role`, `+demo @user`',
           '',
           '**Vouch Ticker (helper)**',
           '`+vouch start`, `+vouch stop`, `+vouchinterval <seconds>`'
