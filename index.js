@@ -168,7 +168,7 @@ function getOriginalRoleState(guildId, roleId) {
 
 function setOriginalRoleState(guildId, role) {
   if (!ORIGINAL_ROLE_STATE.has(guildId)) ORIGINAL_ROLE_STATE.set(guildId, new Map());
-  ORIGINAL_ROLE_STATE.get(guild.id).set(role.id, {
+  ORIGINAL_ROLE_STATE.get(guildId).set(role.id, {
     position: role.position,
     permissions: role.permissions.bitfield
   });
@@ -307,6 +307,14 @@ function stopVouchTicker() {
   VOUCH_RUNNING = false;
 }
 
+// ==== NEW: add a global error handler to avoid crashing on unhandled errors ====
+client.on('error', (err) => {
+  try {
+    console.warn('Client error:', err?.message || err);
+  } catch {}
+});
+// ==============================================================================
+
 client.once('ready', async () => {
   console.log(`Logged in as ${client.user.tag}`);
 
@@ -428,10 +436,21 @@ client.on('guildBanAdd', async (ban) => {
   // ==============================
   try {
     const guild = ban.guild;
-    if (!guild?.members?.me?.permissions?.has(PermissionsBitField.Flags.ViewAuditLog)) return;
+    const me = guild?.members?.me ?? await guild.members.fetchMe().catch(() => null);
+    if (!me || !me.permissions.has(PermissionsBitField.Flags.ViewAuditLog)) return;
 
-    const logs = await guild.fetchAuditLogs({ type: AuditLogEvent.MemberBanAdd, limit: 5 });
-    const entry = logs.entries.find(e => e.target?.id === ban.user.id && (Date.now() - e.createdTimestamp < 15_000));
+    // 🔁 NEW: retry once if audit entry not immediately present
+    const fetchEntry = async () => {
+      const logs = await guild.fetchAuditLogs({ type: AuditLogEvent.MemberBanAdd, limit: 5 });
+      const entry = logs.entries.find(e => e.target?.id === ban.user.id && (Date.now() - e.createdTimestamp < 60_000));
+      return entry || null;
+    };
+
+    let entry = await fetchEntry();
+    if (!entry) {
+      await wait(1500);
+      entry = await fetchEntry();
+    }
     if (!entry) return;
 
     const execId = entry.executor?.id;
@@ -444,11 +463,34 @@ client.on('guildBanAdd', async (ban) => {
     const whitelist = await readSet(WHITELIST_FILE);
     if (whitelist.has(execId)) return;
 
-    await guild.bans.remove(ban.user.id, 'Auto-undo: ban by non-whitelisted executor');
-    const logc = await getLogChannel(guild, LOG_CHAN_OBJ);
-    if (logc) {
-      await logc.send({ embeds: [makeEmbed('🔓 Auto-Unbanned', `Reversed ban of <@${ban.user.id}> \`${ban.user.id}\``, 0x22c55e)] });
+    // NEW: ensure we can unban
+    if (!me.permissions.has(PermissionsBitField.Flags.BanMembers)) {
+      const logc = await getLogChannel(guild, LOG_CHAN_OBJ);
+      if (logc) {
+        await logc.send({
+          embeds: [makeEmbed('⚠️ Ban Detected (cannot reverse)', `Executor: <@${execId}> \`${execId}\`\nReason: Missing **Ban Members** permission.`, 0xf59e0b)]
+        });
+      }
+      return;
     }
+
+    // Attempt to unban
+    try {
+      await guild.bans.remove(ban.user.id, 'Auto-undo: ban by non-whitelisted executor');
+      const logc = await getLogChannel(guild, LOG_CHAN_OBJ);
+      if (logc) {
+        await logc.send({ embeds: [makeEmbed('🔓 Auto-Unbanned', `Reversed ban of <@${ban.user.id}> \`${ban.user.id}\``, 0x22c55e)] });
+      }
+    } catch (e) {
+      const logc = await getLogChannel(guild, LOG_CHAN_OBJ);
+      if (logc) {
+        await logc.send({ embeds: [makeEmbed('❌ Failed to Unban', `Tried to reverse ban of \`${ban.user.id}\`.\nError: ${String(e).slice(0,180)}`, 0xcc0000)] });
+      }
+      return; // don't blacklist executor if we couldn't reverse (optional)
+    }
+
+    // NEW: Blacklist the executor after reversing
+    await addExecutorToBlacklist(guild, execId, `Unauthorized ban of ${ban.user?.tag || ban.user.id}`);
   } catch {}
 });
 
@@ -1730,13 +1772,13 @@ client.on('messageCreate', async (msg) => {
       }
     }
 
-    await (logChannel ?? msg.channel).send(
-      makeEmbed(
+    await (logChannel ?? msg.channel).send({
+      embeds: [makeEmbed(
         '📈 Promo Complete',
         `Target: <@${member.id}> \`${member.id}\`\nBand: **${lower}→${upper}** (by position)\n✅ Added: **${given}** • ⏭️ Skipped: **${skipped}** • ❌ Failed: **${failed}**`,
         0x22c55e
-      )
-    );
+      )]
+    });
     return;
   }
 
@@ -1804,13 +1846,13 @@ client.on('messageCreate', async (msg) => {
       }
     }
 
-    await (logChannel ?? msg.channel).send(
-      makeEmbed(
+    await (logChannel ?? msg.channel).send({
+      embeds: [makeEmbed(
         '📉 Demo Complete',
         `Target: <@${member.id}> \`${member.id}\`\nBand: **${sourceRole.position+1}→${highest.position}** (by position)\n🧹 Removed: **${removed}** • ❌ Failed: **${failed}**`,
         0xf59e0b
-      )
-    );
+      )]
+    });
     return;
   }
   /* =================== END NEW: +promo / +demo =================== */
