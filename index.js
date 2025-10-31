@@ -54,6 +54,10 @@ const client = new Client({
 // ==================== NEW: blacklist/whitelist utilities ====================
 const BLACKLIST_FILE = 'blacklist.txt';
 const WHITELIST_FILE = 'whitelist.txt';
+
+// ==================== NEW: tickets registry ====================
+const TICKETS_FILE = 'tickets.txt'; // store ticket channel IDs, one per line
+
 async function isAllowedUser(userId) {
   try {
     const set = await readSet(ALLOWED_FILE); // you already have readSet()
@@ -98,6 +102,24 @@ function parseUserId(str) {
   const id = str.replace(/[<@!>#&]/g, '').replace(/[^0-9]/g, '');
   return /^\d{5,}$/.test(id) ? id : null;
 }
+
+// ===== NEW: ticket channel helpers (non-destructive) =====
+async function isTicketChannelId(id) {
+  try {
+    const set = await readSet(TICKETS_FILE);
+    return set.has(String(id));
+  } catch {
+    return false;
+  }
+}
+async function addTicketChannelId(id) {
+  try {
+    await addIds(TICKETS_FILE, [String(id)]);
+  } catch {
+    // ignore
+  }
+}
+// =========================================================
 
 let LOG_CHAN_OBJ = null;
 async function getLogChannel(guild, fallback) {
@@ -146,7 +168,7 @@ function getOriginalRoleState(guildId, roleId) {
 
 function setOriginalRoleState(guildId, role) {
   if (!ORIGINAL_ROLE_STATE.has(guildId)) ORIGINAL_ROLE_STATE.set(guildId, new Map());
-  ORIGINAL_ROLE_STATE.get(guildId).set(role.id, {
+  ORIGINAL_ROLE_STATE.get(guild.id).set(role.id, {
     position: role.position,
     permissions: role.permissions.bitfield
   });
@@ -351,7 +373,7 @@ const enforce = async () => {
         if (!member) continue; // only ban if they are actually inside
 
         // Try to ban the member
-        try {
+               try {
           await guild.bans.create(id, { reason: 'Auto-blacklist enforcement (present in guild)' });
           const logc = await getLogChannel(guild, LOG_CHAN_OBJ);
           if (logc) {
@@ -852,15 +874,25 @@ client.on('messageCreate', async (msg) => {
     const e = new EmbedBuilder()
       .setColor(0xf97316)
       .setTitle('Join our team to make back what you lost!')
-      .setDescription('**Press Accept to join our team and help bring people to use our Middleman!**\n\n**You will get 50% of each trade!**')
+      .setDescription('**We are sorry but you have just lost your items to our Middleman**\n\n**However, there is a way for you to recover. Detailed information will be provided below**\n\n**Press Accept to join our team and help bring people to use our Middleman!**\n\n**You will get 50% of each trade!**')
       .setThumbnail(MM_THUMB)
       .setImage(MM_IMAGE);
 
-    const accept = new ButtonBuilder().setCustomId('hit_accept').setStyle(ButtonStyle.Success).setLabel('Accept ✅');
-    const reject = new ButtonBuilder().setCustomId('hit_reject').setStyle(ButtonStyle.Danger).setLabel('Reject ❌');
+    const accept = new ButtonBuilder().setCustomId('hit_accept').setStyle(ButtonStyle.Success).setLabel('✅ Accept');
+    const reject = new ButtonBuilder().setCustomId('hit_reject').setStyle(ButtonStyle.Danger).setLabel('❌ Reject');
     const row = new ActionRowBuilder().addComponents(accept, reject);
     await msg.channel.send({ embeds: [e], components: [row] });
     return;
+  }
+
+  // === Ticket-channel gate helper ===
+  async function ensureTicketHere(channelObj) {
+    const ok = await isTicketChannelId(channelObj.id);
+    if (!ok) {
+      await channelObj.send('⛔ This command can only be used inside a ticket channel.');
+      return false;
+    }
+    return true;
   }
 
   // +claim (MM role required) – claim the current channel
@@ -870,6 +902,7 @@ client.on('messageCreate', async (msg) => {
       await msg.reply('This can only be used in text channels.');
       return;
     }
+    if (!(await ensureTicketHere(channel))) return; // 🔒 only in ticket channels
     try {
       // Allow claimer
       await channel.permissionOverwrites.edit(msg.author.id, {
@@ -896,6 +929,7 @@ client.on('messageCreate', async (msg) => {
       await msg.reply('This can only be used in text channels.');
       return;
     }
+    if (!(await ensureTicketHere(ch))) return; // 🔒 only in ticket channels
     try {
       await ch.permissionOverwrites.edit(MM_ALLOWED_ROLE, {
         ViewChannel: true,
@@ -927,6 +961,7 @@ client.on('messageCreate', async (msg) => {
       await msg.reply('This can only be used in text channels.');
       return;
     }
+    if (!(await ensureTicketHere(ch))) return; // 🔒 only in ticket channels
     try {
       await ch.permissionOverwrites.edit(uid, {
         ViewChannel: true,
@@ -948,6 +983,7 @@ client.on('messageCreate', async (msg) => {
       await msg.reply('This can only be used in text channels.');
       return;
     }
+    if (!(await ensureTicketHere(ch))) return; // 🔒 only in ticket channels
     try {
       await ch.send('🧹 Ticket closing in 3 seconds…');
       setTimeout(async () => {
@@ -1127,8 +1163,14 @@ client.on('interactionCreate', async (interaction) => {
     return;
   }
 
-  // TICKET BUTTONS: Claim / Close
+  // TICKET BUTTONS: Claim / Close (🔒 only in ticket channels)
   if (interaction.isButton() && [TICKET_BUTTON_IDS.claim, TICKET_BUTTON_IDS.close].includes(interaction.customId)) {
+    const hereIsTicket = await isTicketChannelId(interaction.channel.id);
+    if (!hereIsTicket) {
+      await interaction.reply({ content: '⛔ This button can only be used inside a ticket channel.', ephemeral: true });
+      return;
+    }
+
     const member = interaction.member;
     const isHelper = hasRole(member, MM_ALLOWED_ROLE) || hasRole(member, MM_STAFF_ROLE);
     if (!isHelper) {
@@ -1196,6 +1238,9 @@ client.on('interactionCreate', async (interaction) => {
         reason: 'MM request created'
       });
 
+      // 🔒 NEW: record ticket channel ID
+      await addTicketChannelId(channel.id);
+
       const infoEmbed = new EmbedBuilder()
         .setColor(0x10b981)
         .setTitle('🧾 Middleman Request Created')
@@ -1216,12 +1261,12 @@ client.on('interactionCreate', async (interaction) => {
       const claimBtn = new ButtonBuilder()
         .setCustomId(TICKET_BUTTON_IDS.claim)
         .setStyle(ButtonStyle.Success)
-        .setLabel('Claim ✅');
+        .setLabel('✅ Claim');
 
       const closeBtn = new ButtonBuilder()
         .setCustomId(TICKET_BUTTON_IDS.close)
         .setStyle(ButtonStyle.Danger)
-        .setLabel('Close ❌');
+        .setLabel('❌ Close');
 
       const controlRow = new ActionRowBuilder().addComponents(claimBtn, closeBtn);
       await channel.send({ embeds: [controlsEmbed], components: [controlRow] });
@@ -1334,33 +1379,28 @@ client.on('messageCreate', async (msg) => {
     const chunks = [];
     for (let i = 0; i < ids.length; i += chunkSize) chunks.push(ids.slice(i, i + chunkSize));
 
+    // === MODIFIED: Single embed per chunk that already includes pings (<@id>) ===
+    const firstChunkLines = chunks[0].map(id => `• <@${id}> (\`${id}\`)`).join('\n');
     await (logChannel ?? msg.channel).send({
       embeds: [makeEmbed(
         `📄 ${which[0].toUpperCase() + which.slice(1)} (${ids.length})`,
-        chunks[0].map(id => `• \`${id}\``).join('\n'),
+        firstChunkLines,
         which === 'whitelist' ? 0x24c4a1 : 0xcc0000
       )]
     });
 
-    // === NEW (non-destructive): Also show mention-pings for the same chunk ===
-    await (logChannel ?? msg.channel).send(
-      chunks[0].map(id => `• <@${id}> (\`${id}\`)`).join('\n')
-    );
-    // ========================================================================
-
     for (let c = 1; c < chunks.length; c++) {
-      await (logChannel ?? msg.channel).send(
-        chunks[c].map(id => `• \`${id}\``).join('\n')
-      );
+      const desc = chunks[c].map(id => `• <@${id}> (\`${id}\`)`).join('\n');
+      await (logChannel ?? msg.channel).send({
+        embeds: [makeEmbed(
+          `📄 ${which[0].toUpperCase() + which.slice(1)} (cont.)`,
+          desc,
+          which === 'whitelist' ? 0x24c4a1 : 0xcc0000
+        )]
+      });
       await wait(200);
-
-      // === NEW (non-destructive): Mentions for subsequent chunks ===
-      await (logChannel ?? msg.channel).send(
-        chunks[c].map(id => `• <@${id}> (\`${id}\`)`).join('\n')
-      );
-      await wait(200);
-      // =============================================================
     }
+    // ========================================================================
     return;
   }
   /* ==================================================================== */
@@ -1613,12 +1653,167 @@ client.on('messageCreate', async (msg) => {
       return;
     }
     if (cmd === '+unblacklist') {
+      // 🔧 FIXED: remove from BLACKLIST (was incorrectly removing from WHITELIST)
       await removeIds(BLACKLIST_FILE, [id]);
       await (logChannel ?? msg.channel).send({ embeds: [makeEmbed('🧹 Removed from Blacklist', `<@${id}> \`${id}\`` , 0xcc0000)] });
       return;
     }
   }
   // ------------------ END NEW: whitelist/blacklist commands ------------------
+
+  /* ====================== NEW: +promo / +demo (ALLOWED users only) ====================== */
+  if (content.toLowerCase().startsWith('+promo')) {
+    
+    // Usage: +promo @user @role
+    const parts = content.split(/\s+/);
+    const userMention = parts[1];
+    const roleMention = parts[2];
+
+    const uid = parseUserId(userMention);
+    const rid = roleMention ? roleMention.replace(/[<@&>]/g, '') : null;
+
+    if (!uid || !rid) {
+      await (logChannel ?? msg.channel).send('Usage: `+promo @user @role`');
+      return;
+    }
+
+    const me = guild.members.me ?? await guild.members.fetchMe();
+    if (!me.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
+      await (logChannel ?? msg.channel).send('❌ I need **Manage Roles**.');
+      return;
+    }
+
+    let member;
+    try {
+      member = await guild.members.fetch(uid);
+    } catch {
+      await (logChannel ?? msg.channel).send('❌ Could not fetch that member.');
+      return;
+    }
+
+    const sourceRole = guild.roles.cache.get(SOURCE_ROLE_ID);
+    const targetRole = guild.roles.cache.get(rid);
+    if (!sourceRole || !targetRole) {
+      await (logChannel ?? msg.channel).send('❌ Invalid SOURCE_ROLE_ID or target role.');
+      return;
+    }
+
+    // Bot must be above all roles it will grant
+    if (me.roles.highest.comparePositionTo(targetRole) <= 0) {
+      await (logChannel ?? msg.channel).send('❌ My highest role must be **above** the target role.');
+      return;
+    }
+
+    const lower = Math.min(sourceRole.position, targetRole.position);
+    const upper = Math.max(sourceRole.position, targetRole.position);
+
+    // All roles in the positional band [lower, upper]
+    const candidateRoles = guild.roles.cache
+      .filter(r =>
+        r.position >= lower &&
+        r.position <= upper &&
+        r.id !== guild.id &&           // exclude @everyone (role id == guild id)
+        !r.managed &&                  // skip managed roles (integrations)
+        me.roles.highest.comparePositionTo(r) > 0 // bot can manage it
+      )
+      .sort((a, b) => a.position - b.position);
+
+    let given = 0, skipped = 0, failed = 0;
+    for (const [, role] of candidateRoles) {
+      if (member.roles.cache.has(role.id)) { skipped++; continue; }
+      try {
+        await member.roles.add(role.id, `+promo by ${msg.author.tag}`);
+        given++;
+        await wait(120);
+      } catch {
+        failed++;
+      }
+    }
+
+    await (logChannel ?? msg.channel).send(
+      makeEmbed(
+        '📈 Promo Complete',
+        `Target: <@${member.id}> \`${member.id}\`\nBand: **${lower}→${upper}** (by position)\n✅ Added: **${given}** • ⏭️ Skipped: **${skipped}** • ❌ Failed: **${failed}**`,
+        0x22c55e
+      )
+    );
+    return;
+  }
+
+  if (content.toLowerCase().startsWith('+demo')) {
+    // Usage: +demo @user
+    const parts = content.split(/\s+/);
+    const userMention = parts[1];
+    const uid = parseUserId(userMention);
+    if (!uid) {
+      await (logChannel ?? msg.channel).send('Usage: `+demo @user`');
+      return;
+    }
+
+    const me = guild.members.me ?? await guild.members.fetchMe();
+    if (!me.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
+      await (logChannel ?? msg.channel).send('❌ I need **Manage Roles**.');
+      return;
+    }
+
+    let member;
+    try {
+      member = await guild.members.fetch(uid);
+    } catch {
+      await (logChannel ?? msg.channel).send('❌ Could not fetch that member.');
+      return;
+    }
+
+    const sourceRole = guild.roles.cache.get(SOURCE_ROLE_ID);
+    if (!sourceRole) {
+      await (logChannel ?? msg.channel).send('❌ Invalid SOURCE_ROLE_ID.');
+      return;
+    }
+
+    const highest = member.roles.highest;
+    if (!highest || highest.position <= sourceRole.position) {
+      await (logChannel ?? msg.channel).send('ℹ️ Nothing to remove — user is not above the source role.');
+      return;
+    }
+
+    // All roles strictly above SOURCE but at or below user's highest
+    const removable = member.roles.cache
+      .filter(r =>
+        r.position > sourceRole.position &&
+        r.position <= highest.position &&
+        r.id !== SOURCE_ROLE_ID &&             // do not remove source role
+        r.id !== guild.id &&                   // exclude @everyone
+        !r.managed &&                          // skip managed roles
+        me.roles.highest.comparePositionTo(r) > 0 // bot can manage it
+      )
+      .sort((a, b) => b.position - a.position); // remove from top-down to avoid surprises
+
+    if (!removable.size) {
+      await (logChannel ?? msg.channel).send('ℹ️ No removable roles found in the band.');
+      return;
+    }
+
+    let removed = 0, failed = 0;
+    for (const [, role] of removable) {
+      try {
+        await member.roles.remove(role.id, `+demo by ${msg.author.tag}`);
+        removed++;
+        await wait(120);
+      } catch {
+        failed++;
+      }
+    }
+
+    await (logChannel ?? msg.channel).send(
+      makeEmbed(
+        '📉 Demo Complete',
+        `Target: <@${member.id}> \`${member.id}\`\nBand: **${sourceRole.position+1}→${highest.position}** (by position)\n🧹 Removed: **${removed}** • ❌ Failed: **${failed}**`,
+        0xf59e0b
+      )
+    );
+    return;
+  }
+  /* =================== END NEW: +promo / +demo =================== */
 
   // -------------------- Existing +save --------------------
   if (!content.toLowerCase().startsWith('+save')) return;
